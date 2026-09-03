@@ -13,22 +13,36 @@ from loader import GrammarModel, save_model
 WIDTH = 1200
 LENGTH = 800
 
-# Pipeline Programável: Vertex Shader calcula a projeção matricial na GPU
+# Pipeline Programável: Vertex Shader com Física de Vento Dinâmica
 VERTEX_SHADER = """
 #version 120
 attribute vec4 position;
 attribute vec3 color;
 varying vec3 v_color;
+
 uniform mat4 mvp;
+uniform float u_time;
+uniform float u_wind_strength;
 
 void main() {
-    // position.w contém a profundidade estrutural topológica
-    gl_Position = mvp * vec4(position.xyz, 1.0);
+    // position.w armazena a profundidade estrutural topológica (Nível do galho)
+    float depth = position.w;
+    
+    // Oscilação senoidal descompassada pela posição espacial para evitar movimento em bloco
+    float swayX = sin(u_time * 2.0 + position.y * 0.1 + position.z * 0.5) * depth * u_wind_strength;
+    float swayZ = cos(u_time * 1.5 + position.x * 0.1 + position.y * 0.5) * depth * u_wind_strength;
+    
+    vec3 pos = position.xyz;
+    
+    // O tronco (depth = 0) tem sway = 0 e permanece firmemente ancorado na origem
+    pos.x += swayX;
+    pos.z += swayZ;
+    
+    gl_Position = mvp * vec4(pos, 1.0);
     v_color = color;
 }
 """
 
-# Pipeline Programável: Fragment Shader aplica a coloração interpolada
 FRAGMENT_SHADER = """
 #version 120
 varying vec3 v_color;
@@ -50,7 +64,6 @@ class FrameFractalGL(OpenGLFrame):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        # Compilação e vinculação do programa GLSL
         self.shader = compileProgram(
             compileShader(VERTEX_SHADER, GL_VERTEX_SHADER),
             compileShader(FRAGMENT_SHADER, GL_FRAGMENT_SHADER)
@@ -58,13 +71,19 @@ class FrameFractalGL(OpenGLFrame):
         self.pos_loc = glGetAttribLocation(self.shader, "position")
         self.col_loc = glGetAttribLocation(self.shader, "color")
         self.mvp_loc = glGetUniformLocation(self.shader, "mvp")
+        self.time_loc = glGetUniformLocation(self.shader, "u_time")
+        self.wind_loc = glGetUniformLocation(self.shader, "u_wind_strength")
         
         self.vbo_vertice = glGenBuffers(1)
         self.vbo_cor = glGenBuffers(1)
         
         self.num_vertices = 0
         self.draw_limit = 0
+        
         self.is_animating = False
+        self.wind_active = False
+        self.time_val = 0.0
+        self.wind_strength = 0.02
         self.lotes_renderizacao = []
 
         self.zoom = -800.0
@@ -82,7 +101,6 @@ class FrameFractalGL(OpenGLFrame):
         self.bind("<B3-Motion>", self._on_drag_pan)
         self.bind("<MouseWheel>", self._on_zoom)
 
-    # --- Cálculos Matriciais Otimizados via NumPy ---
     def _get_perspective(self, fov, aspect, z_near, z_far):
         f = 1.0 / np.tan(np.radians(fov) / 2.0)
         mat = np.zeros((4, 4), dtype=np.float32)
@@ -212,6 +230,20 @@ class FrameFractalGL(OpenGLFrame):
         if self.is_animating:
             self.after(16, self._anim_loop)
 
+    def toggle_wind(self, active: bool, strength: float):
+        self.wind_active = active
+        self.wind_strength = strength
+        if self.wind_active:
+            self._wind_loop()
+        else:
+            self.tkExpose(None)
+
+    def _wind_loop(self):
+        if not self.wind_active: return
+        self.time_val += 0.05
+        self.tkExpose(None)
+        self.after(16, self._wind_loop)
+
     def exportar_para_imagem(self, filepath: str):
         w, h = self.winfo_width(), self.winfo_height()
         glReadBuffer(GL_FRONT)
@@ -230,16 +262,17 @@ class FrameFractalGL(OpenGLFrame):
         rot_x = self._get_rotation_x(self.rot_x)
         rot_y = self._get_rotation_y(self.rot_y)
         
-        # Álgebra Matricial: MVP = Projection * View * Rotation
         model = np.dot(rot_x, rot_y)
         mv = np.dot(view, model)
         mvp = np.dot(proj, mv)
-        
-        # Transposição para ordenação Column-Major nativa do OpenGL
         mvp_col_major = np.ascontiguousarray(mvp.T, dtype=np.float32)
 
         glUseProgram(self.shader)
         glUniformMatrix4fv(self.mvp_loc, 1, GL_FALSE, mvp_col_major)
+        
+        # Injeta o tempo e a força do vento na GPU
+        glUniform1f(self.time_loc, self.time_val)
+        glUniform1f(self.wind_loc, self.wind_strength if self.wind_active else 0.0)
 
         if self.draw_limit > 0:
             glEnableVertexAttribArray(self.pos_loc)
@@ -269,7 +302,7 @@ class FrameFractalGL(OpenGLFrame):
 class App:
     def __init__(self, root, models=None):
         self.root = root
-        self.root.title("L-System Studio 3D PRO - GLSL Pipeline")
+        self.root.title("L-System Studio 3D PRO - GLSL & Física GPU")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
         
         style = ttk.Style()
@@ -279,6 +312,9 @@ class App:
         self.selected_model = None
         self._is_processing = False
         self.vertices_raw = None
+
+        self.var_wind = tk.BooleanVar(value=False)
+        self.var_wind_strength = tk.DoubleVar(value=0.04)
 
         try:
             self.motor = MotorLSystem()
@@ -315,6 +351,7 @@ class App:
         notebook = ttk.Notebook(painel)
         notebook.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
 
+        # ABA GERAÇÃO
         tab_gerar = tk.Frame(notebook, bg=Palette.BACKGROUND)
         notebook.add(tab_gerar, text="Geração")
 
@@ -340,15 +377,18 @@ class App:
         self.btn_gerar = tk.Button(tab_gerar, text="Renderizar Fractal GLSL", bg="#005fb8", fg="white", font=("Segoe UI", 10, "bold"), command=self._iniciar_processamento_thread)
         self.btn_gerar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=15)
 
+        # ABA VISUAL & FÍSICA
         tab_visual = tk.Frame(notebook, bg=Palette.BACKGROUND)
-        notebook.add(tab_visual, text="Visual")
+        notebook.add(tab_visual, text="Visual & Física")
 
-        tk.Label(tab_visual, text="Câmera 3D:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
-        tk.Label(tab_visual, text="🖱 Esq: Rotacionar | Dir: Transladar", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=2)
-        ttk.Button(tab_visual, text="Resetar Câmera Orbital", command=lambda: self.fractal_gl.reset_view()).pack(fill=tk.X, padx=5, pady=5)
+        tk.Label(tab_visual, text="Física de Vento (GPU):", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
+        ttk.Checkbutton(tab_visual, text="Habilitar Simulação", variable=self.var_wind, command=self._atualizar_vento).pack(anchor='w', padx=5)
+        tk.Label(tab_visual, text="Força do Vento:", bg=Palette.BACKGROUND).pack(anchor='w', padx=5)
+        self.slider_wind = ttk.Scale(tab_visual, from_=0.0, to=0.2, orient=tk.HORIZONTAL, variable=self.var_wind_strength, command=lambda e: self._atualizar_vento())
+        self.slider_wind.pack(fill=tk.X, padx=5)
 
         ttk.Separator(tab_visual, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-        tk.Label(tab_visual, text="Personalizar Cores:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
+        tk.Label(tab_visual, text="Personalizar Cores:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5)
         ttk.Button(tab_visual, text="Cor Inicial", command=lambda: self._escolher_cor(True)).pack(fill=tk.X, padx=5, pady=2)
         ttk.Button(tab_visual, text="Cor Final", command=lambda: self._escolher_cor(False)).pack(fill=tk.X, padx=5, pady=2)
         
@@ -360,6 +400,9 @@ class App:
         ttk.Button(tab_visual, text="▶ Play Animação", command=lambda: self.fractal_gl.play_animation(self.slider_anim.get())).pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(tab_visual, text="⏹ Parar / Mostrar Tudo", command=self._parar_animacao).pack(fill=tk.X, padx=5)
 
+        ttk.Button(tab_visual, text="Resetar Câmera Orbital", command=lambda: self.fractal_gl.reset_view()).pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=15)
+
+        # ABA SANDBOX
         tab_sandbox = tk.Frame(notebook, bg=Palette.BACKGROUND)
         notebook.add(tab_sandbox, text="Sandbox")
 
@@ -386,6 +429,9 @@ class App:
         self.sb_regras.pack(fill=tk.X, padx=5)
 
         ttk.Button(tab_sandbox, text="Salvar Novo Fractal", command=self._salvar_sandbox).pack(fill=tk.X, padx=5, pady=10)
+
+    def _atualizar_vento(self):
+        self.fractal_gl.toggle_wind(self.var_wind.get(), self.var_wind_strength.get())
 
     def _escolher_cor(self, is_start: bool):
         cor_hex = colorchooser.askcolor(title="Escolha a Cor")[1]
@@ -482,6 +528,10 @@ class App:
         self.footer_label.config(text=f" Concluído | {len(vertices)//2:,} arestas renderizadas via Shaders.")
         self._is_processing = False
         self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal GLSL")
+        
+        # Reinicia o vento automaticamente se a flag estiver ativa
+        if self.var_wind.get():
+            self._atualizar_vento()
 
     def _exportar_imagem(self):
         if self.fractal_gl.num_vertices == 0: return
