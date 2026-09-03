@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import ttk
 from utils.colors import Palette
 from OpenGL.GL import *
 from pyopengltk import OpenGLFrame
@@ -19,7 +20,6 @@ class FrameFractalGL(OpenGLFrame):
 
     def redraw(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
 
 class App:
     def __init__(self, root):
@@ -53,6 +53,18 @@ class App:
         painel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         painel.pack_propagate(False)
         tk.Label(painel, text="Configurações", font=("Arial", 12, "bold"), bg=Palette.BACKGROUND).pack(pady=15)
+
+        # Escolha de modelo
+        tk.Label(painel, text="Escolha um modelo:", bg=Palette.BACKGROUND).pack(pady=15, anchor='w')
+        opcoes = ["Python", "JavaScript", "C++", "Java", "Ruby"]
+        combo = ttk.Combobox(painel, values=opcoes, state="readonly")
+        combo.pack(fill=tk.X, padx=10)
+
+        btn_load = tk.Button(painel, text="Carregar Modelo")
+        btn_load.pack(padx=10, pady=5)
+
+        btn_reload = tk.Button(painel, text="Atualizar Modelo")
+        btn_reload.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
 
     def _load_canvas(self):
         # área de visualização
