@@ -4,6 +4,7 @@
 class Palette:
     # Cores
     BACKGROUND = "#eaeaea"
+    BACKGROUND_NIGHT = "#2c2a2a"
 
     @classmethod
     # Converte Hex para RGB normalizado (0.0 a 1.0) para uso no OpenGL

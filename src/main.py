@@ -1,9 +1,10 @@
 from loader import load_models
+import tkinter as tk
+from interface import App
 
-MODELS = "models.json"
 
 def loadModels():
-    models = load_models(MODELS)
+    models = load_models()
     if not models:
         print("Nenhum modelo foi carregado. Encerrando o programa.")
         return
@@ -12,9 +13,12 @@ def loadModels():
     return models
 
 def main():
-    models = loadModels()
+    #models = loadModels()
 
-
+    # interface gráfica
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()

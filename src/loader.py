@@ -12,7 +12,8 @@ class GrammarModel:
     iterations: int
     rules: Dict[str, str]
 
-def load_models(filepath: "str") -> List[GrammarModel]:
+def load_models() -> List[GrammarModel]:
+    filepath = "models.json"
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
                 data = json.load(file)
