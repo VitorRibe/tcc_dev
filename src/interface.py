@@ -279,7 +279,7 @@ class App:
         self.sb_iter.insert(0, "4")
         self.sb_iter.pack(fill=tk.X, padx=5)
 
-        tk.Label(tab_sandbox, text="Regras (Ex: A=AB;B=A):", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=(5,2))
+        tk.Label(tab_sandbox, text="Regras (Ex: F=0.5:FF,0.5:F[+F]):", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=(5,2))
         self.sb_regras = tk.Text(tab_sandbox, height=5, font=("Consolas", 9))
         self.sb_regras.pack(fill=tk.X, padx=5)
 
