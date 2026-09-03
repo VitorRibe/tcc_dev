@@ -22,6 +22,10 @@ class MotorLSystem:
 
         self.lib.calcular_vertices_c.argtypes = [ctypes.c_char_p, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_int)]
         self.lib.calcular_vertices_c.restype = ctypes.POINTER(ctypes.c_float)
+        
+        self.lib.calcular_folhas_c.argtypes = [ctypes.c_char_p, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_int)]
+        self.lib.calcular_folhas_c.restype = ctypes.POINTER(ctypes.c_float)
+
         self.lib.liberar_vertices_c.argtypes = [ctypes.POINTER(ctypes.c_float)]
         self.lib.liberar_vertices_c.restype = None
 
@@ -43,18 +47,27 @@ class MotorLSystem:
     def gerar_vertices(self, instrucoes: str, angulo: float, tamanho_linha: float) -> np.ndarray:
         instrucoes_bytes = instrucoes.encode('utf-8')
         num_vertices = ctypes.c_int(0)
-
-        ponteiro_pts = self.lib.calcular_vertices_c(
-            instrucoes_bytes, float(angulo), float(tamanho_linha), ctypes.byref(num_vertices)
-        )
+        ponteiro_pts = self.lib.calcular_vertices_c(instrucoes_bytes, float(angulo), float(tamanho_linha), ctypes.byref(num_vertices))
 
         if not ponteiro_pts or num_vertices.value == 0:
             return np.array([], dtype=np.float32)
 
         tamanho_array = num_vertices.value * 4
         array_c = ctypes.cast(ponteiro_pts, ctypes.POINTER(ctypes.c_float * tamanho_array))
-        
         vertices_np = np.frombuffer(array_c.contents, dtype=np.float32).copy()
         self.lib.liberar_vertices_c(ponteiro_pts)
-
         return vertices_np.reshape((-1, 4))
+
+    def gerar_folhas(self, instrucoes: str, angulo: float, tamanho_linha: float) -> np.ndarray:
+        instrucoes_bytes = instrucoes.encode('utf-8')
+        num_folhas = ctypes.c_int(0)
+        ponteiro_pts = self.lib.calcular_folhas_c(instrucoes_bytes, float(angulo), float(tamanho_linha), ctypes.byref(num_folhas))
+
+        if not ponteiro_pts or num_folhas.value == 0:
+            return np.array([], dtype=np.float32)
+
+        tamanho_array = num_folhas.value * 4
+        array_c = ctypes.cast(ponteiro_pts, ctypes.POINTER(ctypes.c_float * tamanho_array))
+        folhas_np = np.frombuffer(array_c.contents, dtype=np.float32).copy()
+        self.lib.liberar_vertices_c(ponteiro_pts)
+        return folhas_np.reshape((-1, 4))

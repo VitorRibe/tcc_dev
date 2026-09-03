@@ -3,15 +3,12 @@
 """
 class Palette:
     BACKGROUND = "#eaeaea"
-    BACKGROUND_NIGHT = "#1e1e24" # Um pouco mais escuro para destacar o neon
+    BACKGROUND_NIGHT = "#1e1e24" 
     
-    # Cores do degradê (Exemplo: Cyberpunk / Neon Vibe)
-    GRADIENT_START = "#00f2fe" # Ciano brilhante
-    GRADIENT_END = "#4facfe"   # Azul profundo
+    GRADIENT_START = "#00f2fe"
+    GRADIENT_END = "#4facfe"   
     
-    # Alternativa (Fogo/Magma): 
-    # GRADIENT_START = "#f12711"
-    # GRADIENT_END = "#f5af19"
+    LEAF_COLOR = "#2ecc71" # Nova constante de cor padrão para a folhagem
 
     @classmethod
     def hex_to_rgb_normalized(cls, hex_code: str) -> tuple[float, float, float]:

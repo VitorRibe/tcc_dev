@@ -14,7 +14,7 @@ typedef struct {
     float hx, hy, hz; 
     float lx, ly, lz; 
     float ux, uy, uz; 
-    int profundidade; // Nova variável para rastreamento topológico
+    int profundidade;
 } EstadoPilha;
 
 typedef struct {
@@ -138,12 +138,11 @@ void rotacionar(float angle, float ax, float ay, float az, float* vx, float* vy,
 
 EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, float tamanho_linha, int* out_num_vertices) {
     float a = angulo_graus * (3.14159265358979323846f / 180.0f);
-    
     float x = 0.0f, y = 0.0f, z = 0.0f;
     float hx = 0.0f, hy = 1.0f, hz = 0.0f; 
     float lx = -1.0f, ly = 0.0f, lz = 0.0f;
     float ux = 0.0f, uy = 0.0f, uz = 1.0f; 
-    int profundidade = 0; // Nível topológico do segmento
+    int profundidade = 0;
 
     int num_segmentos = 0;
     for (int i = 0; instrucoes[i] != '\0'; i++) {
@@ -154,14 +153,12 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
     *out_num_vertices = num_segmentos * 2;
     if (num_segmentos == 0) return NULL;
 
-    // 8 floats alocados por segmento: (x1, y1, z1, p1) e (x2, y2, z2, p2)
     float* vertices = (float*)malloc(num_segmentos * 8 * sizeof(float));
     if (!vertices) return NULL;
 
     int p_cap = 1000, p_topo = 0;
     EstadoPilha* pilha = (EstadoPilha*)malloc(p_cap * sizeof(EstadoPilha));
-    if (!pilha) { free(vertices); return NULL; }
-
+    
     int v = 0;
     for (int i = 0; instrucoes[i] != '\0'; i++) {
         char c = instrucoes[i];
@@ -169,7 +166,6 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
             float nx = x + hx * tamanho_linha;
             float ny = y + hy * tamanho_linha;
             float nz = z + hz * tamanho_linha;
-            
             vertices[v++] = x; vertices[v++] = y; vertices[v++] = z; vertices[v++] = (float)profundidade;
             vertices[v++] = nx; vertices[v++] = ny; vertices[v++] = nz; vertices[v++] = (float)profundidade;
             x = nx; y = ny; z = nz;
@@ -184,9 +180,93 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
         else if (c == '[') {
             if (p_topo >= p_cap) {
                 p_cap *= 2;
-                EstadoPilha* t = (EstadoPilha*)realloc(pilha, p_cap * sizeof(EstadoPilha));
-                if (!t) { free(pilha); free(vertices); return NULL; }
-                pilha = t;
+                pilha = (EstadoPilha*)realloc(pilha, p_cap * sizeof(EstadoPilha));
+            }
+            pilha[p_topo++] = (EstadoPilha){x, y, z, hx, hy, hz, lx, ly, lz, ux, uy, uz, profundidade};
+            profundidade++;
+        } 
+        else if (c == ']') {
+            if (p_topo > 0) {
+                p_topo--;
+                x = pilha[p_topo].x; y = pilha[p_topo].y; z = pilha[p_topo].z;
+                hx = pilha[p_topo].hx; hy = pilha[p_topo].hy; hz = pilha[p_topo].hz;
+                lx = pilha[p_topo].lx; ly = pilha[p_topo].ly; lz = pilha[p_topo].lz;
+                ux = pilha[p_topo].ux; uy = pilha[p_topo].uy; uz = pilha[p_topo].uz;
+                profundidade = pilha[p_topo].profundidade;
+            }
+        }
+    }
+    free(pilha);
+    return vertices;
+}
+
+EXPORT float* calcular_folhas_c(const char* instrucoes, float angulo_graus, float tamanho_linha, int* out_num_vertices) {
+    float a = angulo_graus * (3.14159265358979323846f / 180.0f);
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    float hx = 0.0f, hy = 1.0f, hz = 0.0f; 
+    float lx = -1.0f, ly = 0.0f, lz = 0.0f;
+    float ux = 0.0f, uy = 0.0f, uz = 1.0f; 
+    int profundidade = 0;
+
+    int num_folhas = 0;
+    for (int i = 0; instrucoes[i] != '\0'; i++) {
+        if (instrucoes[i] == '@') num_folhas++;
+    }
+
+    // Agora cada folha possui 2 triângulos (6 vértices) para garantir formato dobrado 3D
+    *out_num_vertices = num_folhas * 6; 
+    if (num_folhas == 0) return NULL;
+
+    float* vertices = (float*)malloc(num_folhas * 24 * sizeof(float)); 
+    if (!vertices) return NULL;
+
+    int p_cap = 1000, p_topo = 0;
+    EstadoPilha* pilha = (EstadoPilha*)malloc(p_cap * sizeof(EstadoPilha));
+    
+    int v = 0;
+    for (int i = 0; instrucoes[i] != '\0'; i++) {
+        char c = instrucoes[i];
+        if (c == 'F' || c == 'A' || c == 'B') {
+            x += hx * tamanho_linha;
+            y += hy * tamanho_linha;
+            z += hz * tamanho_linha;
+        } 
+        else if (c == '@') {
+            float scale = tamanho_linha * 1.5f;
+            float fold = scale * 0.3f; // Deslocamento ao longo da Normal (Up) para criar o vinco
+            
+            float bx = x, by = y, bz = z; 
+            float tx = x + hx * scale, ty = y + hy * scale, tz = z + hz * scale;
+            
+            float lx_pos = x + (hx + lx) * scale * 0.5f + ux * fold;
+            float ly_pos = y + (hy + ly) * scale * 0.5f + uy * fold;
+            float lz_pos = z + (hz + lz) * scale * 0.5f + uz * fold;
+
+            float rx_pos = x + (hx - lx) * scale * 0.5f + ux * fold;
+            float ry_pos = y + (hy - ly) * scale * 0.5f + uy * fold;
+            float rz_pos = z + (hz - lz) * scale * 0.5f + uz * fold;
+
+            // Triângulo 1 (Metade Esquerda)
+            vertices[v++] = bx; vertices[v++] = by; vertices[v++] = bz; vertices[v++] = (float)profundidade;
+            vertices[v++] = lx_pos; vertices[v++] = ly_pos; vertices[v++] = lz_pos; vertices[v++] = (float)profundidade;
+            vertices[v++] = tx; vertices[v++] = ty; vertices[v++] = tz; vertices[v++] = (float)profundidade;
+
+            // Triângulo 2 (Metade Direita)
+            vertices[v++] = bx; vertices[v++] = by; vertices[v++] = bz; vertices[v++] = (float)profundidade;
+            vertices[v++] = tx; vertices[v++] = ty; vertices[v++] = tz; vertices[v++] = (float)profundidade;
+            vertices[v++] = rx_pos; vertices[v++] = ry_pos; vertices[v++] = rz_pos; vertices[v++] = (float)profundidade;
+        }
+        else if (c == '+') { rotacionar(a, ux, uy, uz, &hx, &hy, &hz); rotacionar(a, ux, uy, uz, &lx, &ly, &lz); }
+        else if (c == '-') { rotacionar(-a, ux, uy, uz, &hx, &hy, &hz); rotacionar(-a, ux, uy, uz, &lx, &ly, &lz); }
+        else if (c == '&') { rotacionar(a, lx, ly, lz, &hx, &hy, &hz); rotacionar(a, lx, ly, lz, &ux, &uy, &uz); }
+        else if (c == '^') { rotacionar(-a, lx, ly, lz, &hx, &hy, &hz); rotacionar(-a, lx, ly, lz, &ux, &uy, &uz); }
+        else if (c == '\\' || c == '<') { rotacionar(a, hx, hy, hz, &lx, &ly, &lz); rotacionar(a, hx, hy, hz, &ux, &uy, &uz); }
+        else if (c == '/' || c == '>') { rotacionar(-a, hx, hy, hz, &lx, &ly, &lz); rotacionar(-a, hx, hy, hz, &ux, &uy, &uz); }
+        else if (c == '|') { rotacionar(3.14159f, ux, uy, uz, &hx, &hy, &hz); rotacionar(3.14159f, ux, uy, uz, &lx, &ly, &lz); }
+        else if (c == '[') {
+            if (p_topo >= p_cap) {
+                p_cap *= 2;
+                pilha = (EstadoPilha*)realloc(pilha, p_cap * sizeof(EstadoPilha));
             }
             pilha[p_topo++] = (EstadoPilha){x, y, z, hx, hy, hz, lx, ly, lz, ux, uy, uz, profundidade};
             profundidade++;
