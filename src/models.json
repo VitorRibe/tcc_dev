@@ -166,6 +166,35 @@
         "X": "+FY",
         "Y": "-FX"
       }
+    },
+    {
+      "name": "Curva de Hilbert 3D",
+      "axiom": "X",
+      "iterations": 4,
+      "angle": 90.0,
+      "rules": {
+        "X": "^<XF^<XFX-F^>>XFX&F+>>XFX-F>X->"
+      }
+    },
+    {
+      "name": "Árvore 3D Orgânica",
+      "axiom": "X",
+      "iterations": 6,
+      "angle": 22.5,
+      "rules": {
+        "X": "F-[^X]+[<X]+[&X]",
+        "F": "FF"
+      }
+    },
+    {
+      "name": "Pinheiro 3D Estocástico",
+      "axiom": "X",
+      "iterations": 5,
+      "angle": 25.0,
+      "rules": {
+        "X": "0.5:F-[^X]+[<X]+[&X],0.5:F+[&X]-[>X]-[^X]",
+        "F": "FF"
+      }
     }
   ]
 }

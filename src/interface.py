@@ -4,6 +4,7 @@ import numpy as np
 import threading
 from PIL import Image
 from OpenGL.GL import *
+from OpenGL.GLU import gluPerspective
 from pyopengltk import OpenGLFrame
 from utils.colors import Palette
 from motor_lsystem import MotorLSystem
@@ -18,7 +19,8 @@ class FrameFractalGL(OpenGLFrame):
         glClearColor(r_bg, g_bg, b_bg, 1.0)
         
         glDisable(GL_LIGHTING)
-        glDisable(GL_DEPTH_TEST)
+        # Em 3D real precisamos do Teste de Profundidade para que linhas da frente escondam as de trás
+        glEnable(GL_DEPTH_TEST)
         glEnable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         glEnable(GL_BLEND)
@@ -34,43 +36,56 @@ class FrameFractalGL(OpenGLFrame):
         self.draw_limit = 0
         self.is_animating = False
 
-        self.zoom = 1.0
-        self.offset_x = 0.0
-        self.offset_y = -200.0
+        # Sistema de Câmera Orbital
+        self.zoom = -800.0
+        self.rot_x = 10.0
+        self.rot_y = 0.0
+        self.pan_x = 0.0
+        self.pan_y = -100.0
+        
         self.last_x = 0
         self.last_y = 0
 
-        self.bind("<Button-1>", self._on_click)
-        self.bind("<B1-Motion>", self._on_drag)
+        self.bind("<Button-1>", self._on_click)        # Rotação Orbital
+        self.bind("<B1-Motion>", self._on_drag_rot)
+        self.bind("<Button-3>", self._on_click)        # Translação (Pan)
+        self.bind("<B3-Motion>", self._on_drag_pan)
         self.bind("<MouseWheel>", self._on_zoom)
-        self.bind("<Button-4>", lambda e: self._zoom_step(1.1))
-        self.bind("<Button-5>", lambda e: self._zoom_step(1 / 1.1))
 
     def _on_click(self, event):
         self.last_x = event.x
         self.last_y = event.y
 
-    def _on_drag(self, event):
+    def _on_drag_rot(self, event):
         dx = event.x - self.last_x
         dy = event.y - self.last_y
-        self.offset_x += dx / self.zoom
-        self.offset_y -= dy / self.zoom
+        self.rot_y += dx * 0.5
+        self.rot_x += dy * 0.5
         self.last_x = event.x
         self.last_y = event.y
         self.tkExpose(None)
 
-    def _zoom_step(self, factor):
-        self.zoom = max(0.01, min(100.0, self.zoom * factor))
+    def _on_drag_pan(self, event):
+        dx = event.x - self.last_x
+        dy = event.y - self.last_y
+        self.pan_x += dx * abs(self.zoom) * 0.002
+        self.pan_y -= dy * abs(self.zoom) * 0.002
+        self.last_x = event.x
+        self.last_y = event.y
         self.tkExpose(None)
 
     def _on_zoom(self, event):
-        factor = 1.1 if event.delta > 0 else (1 / 1.1)
-        self._zoom_step(factor)
+        factor = 40.0 if event.delta > 0 else -40.0
+        self.zoom += factor
+        if self.zoom > -10.0: self.zoom = -10.0
+        self.tkExpose(None)
 
     def reset_view(self):
-        self.zoom = 1.0
-        self.offset_x = 0.0
-        self.offset_y = -200.0
+        self.zoom = -800.0
+        self.rot_x = 10.0
+        self.rot_y = 0.0
+        self.pan_x = 0.0
+        self.pan_y = -100.0
         self.tkExpose(None)
 
     def _gerar_cores_gradiente(self, num_vertices: int) -> np.ndarray:
@@ -134,26 +149,31 @@ class FrameFractalGL(OpenGLFrame):
         image.save(filepath)
 
     def redraw(self):
-        glClear(GL_COLOR_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
 
         w, h = self.winfo_width() or 1, self.winfo_height() or 1
         razao = w / h
-        alcance_y = 600.0 / self.zoom
-        alcance_x = alcance_y * razao
-        glOrtho(-alcance_x, alcance_x, -alcance_y, alcance_y, -1, 1)
+        # Perspectiva 3D Real 
+        gluPerspective(45.0, razao, 1.0, 10000.0)
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
-        glTranslatef(self.offset_x, self.offset_y, 0.0)
+        
+        # Aplicação das transformações da Câmera Orbital
+        glTranslatef(self.pan_x, self.pan_y, self.zoom)
+        glRotatef(self.rot_x, 1.0, 0.0, 0.0)
+        glRotatef(self.rot_y, 0.0, 1.0, 0.0)
 
         if self.draw_limit > 0:
             glLineWidth(1.5)
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-            glVertexPointer(2, GL_FLOAT, 0, None)
+            # Lê blocos de 3 floats (X, Y, Z) agora
+            glVertexPointer(3, GL_FLOAT, 0, None) 
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
             glColorPointer(3, GL_FLOAT, 0, None)
+            
             glDrawArrays(GL_LINES, 0, self.draw_limit)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
 
@@ -182,10 +202,8 @@ class App:
     def _build_layout(self):
         self._load_menu()
         self._load_configs()
-        
         right_container = tk.Frame(self.root, bg=Palette.BACKGROUND_NIGHT)
         right_container.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
-        
         self._load_footer(right_container)
         self._load_canvas(right_container)
 
@@ -204,11 +222,9 @@ class App:
         painel.pack_propagate(False)
 
         tk.Label(painel, text="L-System Studio", font=("Segoe UI", 16, "bold"), bg=Palette.BACKGROUND).pack(pady=15)
-        
         notebook = ttk.Notebook(painel)
         notebook.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
 
-        # ABA 1: PARÂMETROS BÁSICOS
         tab_gerar = tk.Frame(notebook, bg=Palette.BACKGROUND)
         notebook.add(tab_gerar, text="Geração")
 
@@ -232,12 +248,17 @@ class App:
         self.slider_len = ttk.Scale(tab_gerar, from_=1, to=50, orient=tk.HORIZONTAL)
         self.slider_len.pack(fill=tk.X, padx=5)
 
-        self.btn_gerar = tk.Button(tab_gerar, text="Renderizar Fractal (C)", bg="#005fb8", fg="white", font=("Segoe UI", 10, "bold"), command=self._iniciar_processamento_thread)
+        self.btn_gerar = tk.Button(tab_gerar, text="Renderizar Fractal 3D", bg="#005fb8", fg="white", font=("Segoe UI", 10, "bold"), command=self._iniciar_processamento_thread)
         self.btn_gerar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=15)
 
-        # ABA 2: VISUAL & ANIMAÇÃO
         tab_visual = tk.Frame(notebook, bg=Palette.BACKGROUND)
         notebook.add(tab_visual, text="Visual")
+
+        tk.Label(tab_visual, text="Câmera 3D:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
+        tk.Label(tab_visual, text="🖱 Esq: Rotacionar | Dir: Transladar", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=2)
+        ttk.Button(tab_visual, text="Resetar Câmera Orbital", command=lambda: self.fractal_gl.reset_view()).pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Separator(tab_visual, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
 
         tk.Label(tab_visual, text="Personalizar Cores:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
         ttk.Button(tab_visual, text="Cor Inicial", command=lambda: self._escolher_cor(True)).pack(fill=tk.X, padx=5, pady=2)
@@ -253,10 +274,6 @@ class App:
         ttk.Button(tab_visual, text="▶ Play Animação", command=lambda: self.fractal_gl.play_animation(self.slider_anim.get())).pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(tab_visual, text="⏹ Parar / Mostrar Tudo", command=self._parar_animacao).pack(fill=tk.X, padx=5)
 
-        ttk.Separator(tab_visual, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-        ttk.Button(tab_visual, text="Resetar Câmera", command=lambda: self.fractal_gl.reset_view()).pack(fill=tk.X, padx=5)
-
-        # ABA 3: SANDBOX
         tab_sandbox = tk.Frame(notebook, bg=Palette.BACKGROUND)
         notebook.add(tab_sandbox, text="Sandbox")
 
@@ -268,7 +285,6 @@ class App:
         self.sb_axioma = ttk.Entry(tab_sandbox)
         self.sb_axioma.pack(fill=tk.X, padx=5)
 
-        # Novos campos numéricos adicionados na Sandbox
         tk.Label(tab_sandbox, text="Ângulo (graus):", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=(5,2))
         self.sb_angulo = ttk.Entry(tab_sandbox)
         self.sb_angulo.insert(0, "90.0")
@@ -279,12 +295,11 @@ class App:
         self.sb_iter.insert(0, "4")
         self.sb_iter.pack(fill=tk.X, padx=5)
 
-        tk.Label(tab_sandbox, text="Regras (Ex: F=0.5:FF,0.5:F[+F]):", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=(5,2))
+        tk.Label(tab_sandbox, text="Regras 3D (Usa ^&, /\\, +-):", bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=(5,2))
         self.sb_regras = tk.Text(tab_sandbox, height=5, font=("Consolas", 9))
         self.sb_regras.pack(fill=tk.X, padx=5)
 
         ttk.Button(tab_sandbox, text="Salvar Novo Fractal", command=self._salvar_sandbox).pack(fill=tk.X, padx=5, pady=10)
-
 
     def _escolher_cor(self, is_start: bool):
         cor_hex = colorchooser.askcolor(title="Escolha a Cor")[1]
@@ -299,35 +314,26 @@ class App:
         self.fractal_gl.tkExpose(None)
 
     def _salvar_sandbox(self):
-        nome = self.sb_nome.get().strip()
-        axioma = self.sb_axioma.get().strip()
+        nome, axioma = self.sb_nome.get().strip(), self.sb_axioma.get().strip()
         regras_raw = self.sb_regras.get("1.0", tk.END).strip()
-
         if not nome or not axioma or not regras_raw:
             messagebox.showerror("Erro", "Preencha Nome, Axioma e Regras.")
             return
 
         try:
-            angulo = float(self.sb_angulo.get().strip())
+            angulo, iteracoes = float(self.sb_angulo.get().strip()), int(self.sb_iter.get().strip())
         except ValueError:
-            messagebox.showerror("Erro", "O campo Ângulo deve ser um número válido (ex: 90.0).")
-            return
-
-        try:
-            iteracoes = int(self.sb_iter.get().strip())
-        except ValueError:
-            messagebox.showerror("Erro", "O campo Iterações deve ser um número inteiro (ex: 4).")
+            messagebox.showerror("Erro", "Campos numéricos inválidos.")
             return
 
         regras_dict = {}
         try:
-            pares = regras_raw.replace("\n", "").split(";")
-            for p in pares:
+            for p in regras_raw.replace("\n", "").split(";"):
                 if "=" in p:
                     k, v = p.split("=")
                     regras_dict[k.strip()] = v.strip()
         except:
-            messagebox.showerror("Erro", "Formato de regra inválido. Use A=B;C=D")
+            messagebox.showerror("Erro", "Formato inválido. Use A=B;C=D")
             return
 
         novo_modelo = GrammarModel(nome, axioma, iteracoes, angulo, regras_dict)
@@ -337,17 +343,14 @@ class App:
         self.combo['values'] = [m.name for m in self.models_list]
         self.combo.set(nome)
         self.carregar_modelo_selecionado()
-        messagebox.showinfo("Sucesso", "Modelo salvo em models.json e carregado na aba de Geração!")
+        messagebox.showinfo("Sucesso", "Modelo salvo e carregado!")
 
     def _load_footer(self, parent_frame):
         self.footer_frame = tk.Frame(parent_frame, bg="#e0e0e0", height=28)
         self.footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.footer_frame.pack_propagate(False)
 
-        self.footer_label = tk.Label(
-            self.footer_frame, text=" L-System Studio | Pronto.", 
-            bg="#e0e0e0", fg="#444", anchor="w", font=("Segoe UI", 8)
-        )
+        self.footer_label = tk.Label(self.footer_frame, text=" L-System Studio 3D | Pronto.", bg="#e0e0e0", fg="#444", anchor="w", font=("Segoe UI", 8))
         self.footer_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     def _load_canvas(self, parent_frame):
@@ -369,19 +372,12 @@ class App:
             self.footer_label.config(text=f" Modelo Ativo: {self.selected_model.name}")
 
     def _iniciar_processamento_thread(self):
-        if self._is_processing: return
-        if not self.selected_model: return
-
+        if self._is_processing or not self.selected_model: return
         self._is_processing = True
-        self.btn_gerar.config(state=tk.DISABLED, text="Calculando...")
+        self.btn_gerar.config(state=tk.DISABLED, text="Calculando Matrizes 3D...")
         
-        n = int(self.slider_iter.get())
-        ang = float(self.slider_ang.get())
-        comp = float(self.slider_len.get())
-        
-        if n > 15: n = 15 
-
-        threading.Thread(target=self._processar_fractal_worker, args=(n, ang, comp), daemon=True).start()
+        n = min(15, int(self.slider_iter.get()))
+        threading.Thread(target=self._processar_fractal_worker, args=(n, float(self.slider_ang.get()), float(self.slider_len.get())), daemon=True).start()
 
     def _processar_fractal_worker(self, n: int, ang: float, comp: float):
         try:
@@ -391,17 +387,10 @@ class App:
         except Exception as e:
             self.root.after(0, lambda: self.footer_label.config(text=f" Erro: {e}"))
             self._is_processing = False
-            self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal (C)")
+            self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
 
     def _finalizar_processamento(self, vertices: np.ndarray):
         self.fractal_gl.carregar_geometria(vertices)
-        self.footer_label.config(text=f" Concluído | {len(vertices)//2:,} segmentos de linha computados.")
+        self.footer_label.config(text=f" Concluído | {len(vertices)//3:,} vértices espaciais computados.")
         self._is_processing = False
-        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal (C)")
-
-    def _exportar_imagem(self):
-        if self.fractal_gl.num_vertices == 0: return
-        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
-        if filepath:
-            self.fractal_gl.exportar_para_imagem(filepath)
-            self.footer_label.config(text=f" Imagem exportada: {filepath}")
+        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
