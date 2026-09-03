@@ -1,26 +1,34 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 import numpy as np
+import threading
+from PIL import Image
 from OpenGL.GL import *
 from pyopengltk import OpenGLFrame
 from utils.colors import Palette
 from motor_lsystem import MotorLSystem
 
-WIDTH = 1080
-LENGTH = 720
+WIDTH = 1150
+LENGTH = 760
 
 class FrameFractalGL(OpenGLFrame):
-    """Viewport OpenGL acoplada ao Tkinter via VBO dinâmico."""
     def initgl(self):
-        glClearColor(0.17, 0.16, 0.16, 1.0)
+        r_bg, g_bg, b_bg = Palette.hex_to_rgb_normalized(Palette.BACKGROUND_NIGHT)
+        glClearColor(r_bg, g_bg, b_bg, 1.0)
+        
         glDisable(GL_LIGHTING)
         glDisable(GL_DEPTH_TEST)
+
+        # Configurações Premium: Anti-aliasing para suavização perfeita das linhas
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         glEnableClientState(GL_VERTEX_ARRAY)
         self.vbo_vertice = glGenBuffers(1)
         self.num_vertices = 0
 
-        # Controle de Câmera 2D (Pan/Zoom)
         self.zoom = 1.0
         self.offset_x = 0.0
         self.offset_y = -200.0
@@ -47,7 +55,7 @@ class FrameFractalGL(OpenGLFrame):
         self.tkExpose(None)
 
     def _zoom_step(self, factor):
-        self.zoom = max(0.01, min(50.0, self.zoom * factor))
+        self.zoom = max(0.01, min(100.0, self.zoom * factor))
         self.tkExpose(None)
 
     def _on_zoom(self, event):
@@ -61,7 +69,6 @@ class FrameFractalGL(OpenGLFrame):
         self.tkExpose(None)
 
     def carregar_geometria(self, vertices_np: np.ndarray):
-        """Atualiza o VBO diretamente com o array float32 vindo do C."""
         if vertices_np.size == 0:
             self.num_vertices = 0
             self.tkExpose(None)
@@ -73,7 +80,20 @@ class FrameFractalGL(OpenGLFrame):
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
         glBufferData(GL_ARRAY_BUFFER, dados_contiguos.nbytes, dados_contiguos, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+        
+        self.reset_view()
         self.tkExpose(None)
+
+    def exportar_para_imagem(self, filepath: str):
+        """Lê os pixels diretamente do buffer da GPU e salva em alta qualidade."""
+        w = self.winfo_width()
+        h = self.winfo_height()
+        glReadBuffer(GL_FRONT)
+        pixels = glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE)
+        
+        image = Image.frombytes("RGB", (w, h), pixels)
+        image = image.transpose(Image.FLIP_TOP_BOTTOM)
+        image.save(filepath)
 
     def redraw(self):
         glClear(GL_COLOR_BUFFER_BIT)
@@ -84,7 +104,6 @@ class FrameFractalGL(OpenGLFrame):
         h = self.winfo_height() or 1
         razao = w / h
 
-        # Projeção ortográfica adaptada com Pan e Zoom
         alcance_y = 600.0 / self.zoom
         alcance_x = alcance_y * razao
         glOrtho(-alcance_x, alcance_x, -alcance_y, alcance_y, -1, 1)
@@ -94,8 +113,10 @@ class FrameFractalGL(OpenGLFrame):
         glTranslatef(self.offset_x, self.offset_y, 0.0)
 
         if self.num_vertices > 0:
-            glColor3f(0.8, 0.9, 0.95)
-            glLineWidth(1.2)
+            r_line, g_line, b_line = Palette.hex_to_rgb_normalized(Palette.FRACTAL_LINE)
+            glColor3f(r_line, g_line, b_line)
+            
+            glLineWidth(1.5)
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
             glVertexPointer(2, GL_FLOAT, 0, None)
             glDrawArrays(GL_LINES, 0, self.num_vertices)
@@ -105,11 +126,17 @@ class FrameFractalGL(OpenGLFrame):
 class App:
     def __init__(self, root, models=None):
         self.root = root
-        self.root.title("Visualizador Fractal 3D/2D - Acelerado em C")
+        self.root.title("Visualizador Fractal 3D/2D PRO")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
+        
+        # Aplicação de tema profissional para remover visual datado do Tkinter
+        style = ttk.Style()
+        if 'clam' in style.theme_names():
+            style.theme_use('clam')
 
         self.models_list = models if models else []
         self.selected_model = None
+        self._is_processing = False
 
         try:
             self.motor = MotorLSystem()
@@ -132,63 +159,71 @@ class App:
 
     def _load_menu(self):
         menu_bar = tk.Menu(self.root)
+        
         file_menu = tk.Menu(menu_bar, tearoff=0)
+        file_menu.add_command(label="Exportar Imagem (PNG)...", command=self._exportar_imagem)
+        file_menu.add_separator()
         file_menu.add_command(label="Sair", command=self.root.quit)
         menu_bar.add_cascade(label="Arquivo", menu=file_menu)
 
         view_menu = tk.Menu(menu_bar, tearoff=0)
-        view_menu.add_command(label="Resetar Câmera", command=lambda: self.fractal_gl.reset_view())
+        view_menu.add_command(label="Centralizar Câmera", command=lambda: self.fractal_gl.reset_view())
         menu_bar.add_cascade(label="Visualização", menu=view_menu)
         self.root.config(menu=menu_bar)
 
     def _load_configs(self):
-        painel = tk.Frame(self.root, width=240, bg=Palette.BACKGROUND)
-        painel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        painel = tk.Frame(self.root, width=260, bg=Palette.BACKGROUND)
+        painel.pack(side=tk.LEFT, fill=tk.Y)
         painel.pack_propagate(False)
 
-        tk.Label(painel, text="Configurações", font=("Arial", 12, "bold"), bg=Palette.BACKGROUND).pack(pady=15)
-        tk.Label(painel, text="Escolha um modelo:", bg=Palette.BACKGROUND).pack(pady=5, anchor='w', padx=10)
-
+        tk.Label(painel, text="L-System Studio", font=("Segoe UI", 14, "bold"), bg=Palette.BACKGROUND, fg="#333").pack(pady=20)
+        
+        tk.Label(painel, text="Biblioteca de Modelos:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND, fg="#555").pack(anchor='w', padx=15, pady=(5, 0))
         opcoes = [m.name for m in self.models_list]
-        self.combo = ttk.Combobox(painel, values=opcoes, state="readonly")
-        self.combo.pack(fill=tk.X, padx=10)
+        self.combo = ttk.Combobox(painel, values=opcoes, state="readonly", font=("Segoe UI", 9))
+        self.combo.pack(fill=tk.X, padx=15, pady=5)
         if opcoes:
             self.combo.current(0)
 
-        tk.Button(painel, text="Carregar Modelo", command=self.carregar_modelo_selecionado).pack(fill=tk.X, padx=10, pady=10)
+        # Botão estilizado com ttk
+        ttk.Button(painel, text="Carregar Modelo", command=self.carregar_modelo_selecionado).pack(fill=tk.X, padx=15, pady=5)
 
-        tk.Frame(painel, height=2, bg="#cccccc").pack(fill=tk.X, padx=10, pady=10)
+        tk.Frame(painel, height=1, bg="#d4d4d4").pack(fill=tk.X, padx=15, pady=15)
 
-        tk.Label(painel, text="Ângulo (graus):", bg=Palette.BACKGROUND).pack(anchor="w", padx=10)
-        self.slider_ang = tk.Scale(painel, from_=0.0, to=180.0, resolution=0.5, orient=tk.HORIZONTAL)
-        self.slider_ang.set(25.7)
-        self.slider_ang.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(painel, text="Parâmetros de Geração", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND, fg="#555").pack(anchor='w', padx=15, pady=5)
 
-        tk.Label(painel, text="Iterações (n):", bg=Palette.BACKGROUND).pack(anchor="w", padx=10)
-        self.slider_iter = tk.Scale(painel, from_=1, to=15, orient=tk.HORIZONTAL)
+        tk.Label(painel, text="Ângulo de Rotação (graus):", bg=Palette.BACKGROUND, font=("Segoe UI", 9)).pack(anchor="w", padx=15)
+        self.slider_ang = ttk.Scale(painel, from_=0.0, to=180.0, orient=tk.HORIZONTAL)
+        self.slider_ang.set(90.0)
+        self.slider_ang.pack(fill=tk.X, padx=15, pady=2)
+
+        tk.Label(painel, text="Nível de Complexidade (n):", bg=Palette.BACKGROUND, font=("Segoe UI", 9)).pack(anchor="w", padx=15)
+        self.slider_iter = ttk.Scale(painel, from_=1, to=15, orient=tk.HORIZONTAL)
         self.slider_iter.set(4)
-        self.slider_iter.pack(fill=tk.X, padx=10, pady=2)
+        self.slider_iter.pack(fill=tk.X, padx=15, pady=2)
 
-        tk.Label(painel, text="Tamanho do Segmento:", bg=Palette.BACKGROUND).pack(anchor="w", padx=10)
-        self.slider_len = tk.Scale(painel, from_=1, to=50, orient=tk.HORIZONTAL)
+        tk.Label(painel, text="Escala do Segmento:", bg=Palette.BACKGROUND, font=("Segoe UI", 9)).pack(anchor="w", padx=15)
+        self.slider_len = ttk.Scale(painel, from_=1, to=50, orient=tk.HORIZONTAL)
         self.slider_len.set(10)
-        self.slider_len.pack(fill=tk.X, padx=10, pady=2)
+        self.slider_len.pack(fill=tk.X, padx=15, pady=2)
 
-        tk.Button(
-            painel, text="Gerar Fractal (GPU)", bg="#4CAF50", fg="white", 
-            font=("Arial", 10, "bold"), command=self.processar_fractal
-        ).pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=15)
+        self.btn_gerar = tk.Button(
+            painel, text="Renderizar Fractal", bg="#005fb8", fg="white", 
+            font=("Segoe UI", 10, "bold"), relief=tk.FLAT, command=self._iniciar_processamento_thread,
+            activebackground="#004a90", activeforeground="white", cursor="hand2"
+        )
+        self.btn_gerar.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=20)
 
     def _load_footer(self, parent_frame):
-        self.footer_frame = tk.Frame(parent_frame, bg=Palette.BACKGROUND, height=30)
+        self.footer_frame = tk.Frame(parent_frame, bg="#e0e0e0", height=28)
         self.footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.footer_frame.pack_propagate(False)
 
         self.footer_label = tk.Label(
-            self.footer_frame, text="Status: Pronto. Nenhum modelo em exibição.", 
-            bg=Palette.BACKGROUND, anchor="w", font=("Arial", 9)
+            self.footer_frame, text=" Motor de Geração C | Pronto para uso.", 
+            bg="#e0e0e0", fg="#444", anchor="w", font=("Segoe UI", 8)
         )
-        self.footer_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        self.footer_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     def _load_canvas(self, parent_frame):
         canvas_frame = tk.Frame(parent_frame, bg=Palette.BACKGROUND_NIGHT)
@@ -204,38 +239,59 @@ class App:
                 break
 
         if self.selected_model:
-            # A interface agora atualiza iterações E ângulo automaticamente
             self.slider_iter.set(self.selected_model.iterations)
             self.slider_ang.set(self.selected_model.angle)
-            
-            self.footer_label.config(text=f"Carregado: {self.selected_model.name} | Axioma: {self.selected_model.axiom}")
-            print(f"[UI] Modelo selecionado: {self.selected_model.name}")
+            self.footer_label.config(text=f" Modelo Ativo: {self.selected_model.name}  |  Axioma Base: {self.selected_model.axiom}")
 
-    def processar_fractal(self):
+    def _iniciar_processamento_thread(self):
+        if self._is_processing: return
         if not self.selected_model or not self.motor:
-            print("[Aviso] Selecione um modelo e verifique se a DLL está compilada.")
+            messagebox.showwarning("Aviso", "Selecione um modelo e garanta que o motor C está ativo.")
             return
+
+        self._is_processing = True
+        self.btn_gerar.config(state=tk.DISABLED, text="Calculando...", bg="#888")
+        self.footer_label.config(text=" Processando matrizes geométricas no backend...")
 
         n = int(self.slider_iter.get())
         ang = float(self.slider_ang.get())
         comp = float(self.slider_len.get())
 
-        print(f"[Processando] Gerando L-System ({n} iterações em C)...")
-        
-        palavra_derivada = self.motor.gerar(
-            axioma=self.selected_model.axiom,
-            regras=self.selected_model.rules,
-            iteracoes=n
-        )
+        thread = threading.Thread(target=self._processar_fractal_worker, args=(n, ang, comp), daemon=True)
+        thread.start()
 
-        vertices = self.motor.gerar_vertices(
-            instrucoes=palavra_derivada,
-            angulo=ang,
-            tamanho_linha=comp
-        )
+    def _processar_fractal_worker(self, n: int, ang: float, comp: float):
+        try:
+            palavra_derivada = self.motor.gerar(self.selected_model.axiom, self.selected_model.rules, n)
+            vertices = self.motor.gerar_vertices(palavra_derivada, ang, comp)
+            self.root.after(0, self._finalizar_processamento, vertices)
+        except Exception as e:
+            self.root.after(0, self._falha_processamento, str(e))
 
+    def _finalizar_processamento(self, vertices: np.ndarray):
         self.fractal_gl.carregar_geometria(vertices)
         
-        info = f"Ativo: {self.selected_model.name} | Segmentos: {len(vertices)//2} | Vértices VRAM: {len(vertices)}"
+        info = f" Renderização Concluída | Segmentos: {len(vertices)//2:,} | Memória VRAM: {len(vertices):,} vértices"
         self.footer_label.config(text=info)
-        print(f"[Render] {info}")
+        
+        self._is_processing = False
+        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal", bg="#005fb8")
+
+    def _falha_processamento(self, erro: str):
+        self.footer_label.config(text=f" Erro de execução nativa: {erro}")
+        self._is_processing = False
+        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal", bg="#005fb8")
+
+    def _exportar_imagem(self):
+        if self.fractal_gl.num_vertices == 0:
+            messagebox.showinfo("Exportar", "Gere um fractal primeiro antes de exportar.")
+            return
+            
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("Arquivos PNG", "*.png"), ("Todos os Arquivos", "*.*")],
+            title="Exportar Renderização"
+        )
+        if filepath:
+            self.fractal_gl.exportar_para_imagem(filepath)
+            self.footer_label.config(text=f" Imagem salva com sucesso em: {filepath}")
