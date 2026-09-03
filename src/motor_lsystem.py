@@ -51,11 +51,10 @@ class MotorLSystem:
         if not ponteiro_pts or num_vertices.value == 0:
             return np.array([], dtype=np.float32)
 
-        # Alteração Crítica 3D: O C agora envia 3 componentes (X, Y, Z) por vértice
-        tamanho_array = num_vertices.value * 3
+        tamanho_array = num_vertices.value * 4
         array_c = ctypes.cast(ponteiro_pts, ctypes.POINTER(ctypes.c_float * tamanho_array))
         
         vertices_np = np.frombuffer(array_c.contents, dtype=np.float32).copy()
         self.lib.liberar_vertices_c(ponteiro_pts)
 
-        return vertices_np.reshape((-1, 3))
+        return vertices_np.reshape((-1, 4))

@@ -14,6 +14,7 @@ typedef struct {
     float hx, hy, hz; 
     float lx, ly, lz; 
     float ux, uy, uz; 
+    int profundidade; // Nova variável para rastreamento topológico
 } EstadoPilha;
 
 typedef struct {
@@ -142,6 +143,7 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
     float hx = 0.0f, hy = 1.0f, hz = 0.0f; 
     float lx = -1.0f, ly = 0.0f, lz = 0.0f;
     float ux = 0.0f, uy = 0.0f, uz = 1.0f; 
+    int profundidade = 0; // Nível topológico do segmento
 
     int num_segmentos = 0;
     for (int i = 0; instrucoes[i] != '\0'; i++) {
@@ -152,7 +154,8 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
     *out_num_vertices = num_segmentos * 2;
     if (num_segmentos == 0) return NULL;
 
-    float* vertices = (float*)malloc(num_segmentos * 6 * sizeof(float));
+    // 8 floats alocados por segmento: (x1, y1, z1, p1) e (x2, y2, z2, p2)
+    float* vertices = (float*)malloc(num_segmentos * 8 * sizeof(float));
     if (!vertices) return NULL;
 
     int p_cap = 1000, p_topo = 0;
@@ -167,8 +170,8 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
             float ny = y + hy * tamanho_linha;
             float nz = z + hz * tamanho_linha;
             
-            vertices[v++] = x; vertices[v++] = y; vertices[v++] = z;
-            vertices[v++] = nx; vertices[v++] = ny; vertices[v++] = nz;
+            vertices[v++] = x; vertices[v++] = y; vertices[v++] = z; vertices[v++] = (float)profundidade;
+            vertices[v++] = nx; vertices[v++] = ny; vertices[v++] = nz; vertices[v++] = (float)profundidade;
             x = nx; y = ny; z = nz;
         } 
         else if (c == '+') { rotacionar(a, ux, uy, uz, &hx, &hy, &hz); rotacionar(a, ux, uy, uz, &lx, &ly, &lz); }
@@ -185,7 +188,8 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
                 if (!t) { free(pilha); free(vertices); return NULL; }
                 pilha = t;
             }
-            pilha[p_topo++] = (EstadoPilha){x, y, z, hx, hy, hz, lx, ly, lz, ux, uy, uz};
+            pilha[p_topo++] = (EstadoPilha){x, y, z, hx, hy, hz, lx, ly, lz, ux, uy, uz, profundidade};
+            profundidade++;
         } 
         else if (c == ']') {
             if (p_topo > 0) {
@@ -194,6 +198,7 @@ EXPORT float* calcular_vertices_c(const char* instrucoes, float angulo_graus, fl
                 hx = pilha[p_topo].hx; hy = pilha[p_topo].hy; hz = pilha[p_topo].hz;
                 lx = pilha[p_topo].lx; ly = pilha[p_topo].ly; lz = pilha[p_topo].lz;
                 ux = pilha[p_topo].ux; uy = pilha[p_topo].uy; uz = pilha[p_topo].uz;
+                profundidade = pilha[p_topo].profundidade;
             }
         }
     }

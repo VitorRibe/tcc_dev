@@ -19,7 +19,6 @@ class FrameFractalGL(OpenGLFrame):
         glClearColor(r_bg, g_bg, b_bg, 1.0)
         
         glDisable(GL_LIGHTING)
-        # Em 3D real precisamos do Teste de Profundidade para que linhas da frente escondam as de trás
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
@@ -35,8 +34,8 @@ class FrameFractalGL(OpenGLFrame):
         self.num_vertices = 0
         self.draw_limit = 0
         self.is_animating = False
+        self.lotes_renderizacao = []
 
-        # Sistema de Câmera Orbital
         self.zoom = -800.0
         self.rot_x = 10.0
         self.rot_y = 0.0
@@ -46,9 +45,9 @@ class FrameFractalGL(OpenGLFrame):
         self.last_x = 0
         self.last_y = 0
 
-        self.bind("<Button-1>", self._on_click)        # Rotação Orbital
+        self.bind("<Button-1>", self._on_click)        
         self.bind("<B1-Motion>", self._on_drag_rot)
-        self.bind("<Button-3>", self._on_click)        # Translação (Pan)
+        self.bind("<Button-3>", self._on_click)        
         self.bind("<B3-Motion>", self._on_drag_pan)
         self.bind("<MouseWheel>", self._on_zoom)
 
@@ -57,26 +56,21 @@ class FrameFractalGL(OpenGLFrame):
         self.last_y = event.y
 
     def _on_drag_rot(self, event):
-        dx = event.x - self.last_x
-        dy = event.y - self.last_y
-        self.rot_y += dx * 0.5
-        self.rot_x += dy * 0.5
+        self.rot_y += (event.x - self.last_x) * 0.5
+        self.rot_x += (event.y - self.last_y) * 0.5
         self.last_x = event.x
         self.last_y = event.y
         self.tkExpose(None)
 
     def _on_drag_pan(self, event):
-        dx = event.x - self.last_x
-        dy = event.y - self.last_y
-        self.pan_x += dx * abs(self.zoom) * 0.002
-        self.pan_y -= dy * abs(self.zoom) * 0.002
+        self.pan_x += (event.x - self.last_x) * abs(self.zoom) * 0.002
+        self.pan_y -= (event.y - self.last_y) * abs(self.zoom) * 0.002
         self.last_x = event.x
         self.last_y = event.y
         self.tkExpose(None)
 
     def _on_zoom(self, event):
-        factor = 40.0 if event.delta > 0 else -40.0
-        self.zoom += factor
+        self.zoom += 40.0 if event.delta > 0 else -40.0
         if self.zoom > -10.0: self.zoom = -10.0
         self.tkExpose(None)
 
@@ -88,23 +82,6 @@ class FrameFractalGL(OpenGLFrame):
         self.pan_y = -100.0
         self.tkExpose(None)
 
-    def _gerar_cores_gradiente(self, num_vertices: int) -> np.ndarray:
-        r1, g1, b1 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_START)
-        r2, g2, b2 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_END)
-        t = np.linspace(0, 1, num_vertices, dtype=np.float32).reshape(-1, 1)
-        c1 = np.array([r1, g1, b1], dtype=np.float32)
-        c2 = np.array([r2, g2, b2], dtype=np.float32)
-        cores_np = c1 * (1 - t) + c2 * t
-        return np.ascontiguousarray(cores_np)
-
-    def atualizar_cores_vbo(self):
-        if self.num_vertices == 0: return
-        cores_np = self._gerar_cores_gradiente(self.num_vertices)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
-        glBufferData(GL_ARRAY_BUFFER, cores_np.nbytes, cores_np, GL_STATIC_DRAW)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-        self.tkExpose(None)
-
     def carregar_geometria(self, vertices_np: np.ndarray):
         self.is_animating = False
         if vertices_np.size == 0:
@@ -113,15 +90,50 @@ class FrameFractalGL(OpenGLFrame):
             self.tkExpose(None)
             return
 
-        dados_contiguos = np.ascontiguousarray(vertices_np, dtype=np.float32)
-        self.num_vertices = dados_contiguos.shape[0]
+        # Agrupamento e ordenação geométrica por nível de profundidade W
+        segmentos = vertices_np.reshape(-1, 2, 4)
+        prof_max = np.max(segmentos[:, 0, 3]) if len(segmentos) > 0 else 1
+        prof_max = prof_max if prof_max > 0 else 1
+
+        ordem = np.argsort(segmentos[:, 0, 3])
+        segmentos_ordenados = segmentos[ordem]
+        vertices_ordenados = segmentos_ordenados.reshape(-1, 4)
+        self.num_vertices = vertices_ordenados.shape[0]
         self.draw_limit = self.num_vertices
 
+        # Separação das coordenadas X,Y,Z para a GPU
+        geom_xyz = np.ascontiguousarray(vertices_ordenados[:, 0:3], dtype=np.float32)
+
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-        glBufferData(GL_ARRAY_BUFFER, dados_contiguos.nbytes, dados_contiguos, GL_STATIC_DRAW)
-        
-        self.atualizar_cores_vbo()
+        glBufferData(GL_ARRAY_BUFFER, geom_xyz.nbytes, geom_xyz, GL_STATIC_DRAW)
+
+        # Mapeamento do lote de renderização (Desempenho e Espessura Dinâmica)
+        self.lotes_renderizacao = []
+        start = 0
+        unique_depths, counts = np.unique(segmentos_ordenados[:, 0, 3], return_counts=True)
+        for depth, count in zip(unique_depths, counts):
+            num_verts = count * 2
+            width = max(1.0, 5.0 - (depth * 0.4)) # Base grossa (5.0), pontas finas (1.0)
+            self.lotes_renderizacao.append((start, num_verts, width))
+            start += num_verts
+
+        self._atualizar_cores_vbo(vertices_ordenados[:, 3], prof_max)
         self.reset_view()
+
+    def _atualizar_cores_vbo(self, profundidades: np.ndarray, prof_max: float):
+        r1, g1, b1 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_START)
+        r2, g2, b2 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_END)
+        c1 = np.array([r1, g1, b1], dtype=np.float32)
+        c2 = np.array([r2, g2, b2], dtype=np.float32)
+
+        # Gradiente vinculado topologicamente à árvore (e não à ordem de desenho)
+        t = (profundidades / prof_max).reshape(-1, 1)
+        cores_np = c1 * (1 - t) + c2 * t
+        cores_np = np.ascontiguousarray(cores_np, dtype=np.float32)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
+        glBufferData(GL_ARRAY_BUFFER, cores_np.nbytes, cores_np, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def play_animation(self, speed_multiplier: float):
         if self.num_vertices == 0: return
@@ -152,36 +164,36 @@ class FrameFractalGL(OpenGLFrame):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-
-        w, h = self.winfo_width() or 1, self.winfo_height() or 1
-        razao = w / h
-        # Perspectiva 3D Real 
-        gluPerspective(45.0, razao, 1.0, 10000.0)
+        gluPerspective(45.0, (self.winfo_width() or 1) / (self.winfo_height() or 1), 1.0, 10000.0)
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
-        
-        # Aplicação das transformações da Câmera Orbital
         glTranslatef(self.pan_x, self.pan_y, self.zoom)
         glRotatef(self.rot_x, 1.0, 0.0, 0.0)
         glRotatef(self.rot_y, 0.0, 1.0, 0.0)
 
         if self.draw_limit > 0:
-            glLineWidth(1.5)
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-            # Lê blocos de 3 floats (X, Y, Z) agora
             glVertexPointer(3, GL_FLOAT, 0, None) 
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
             glColorPointer(3, GL_FLOAT, 0, None)
             
-            glDrawArrays(GL_LINES, 0, self.draw_limit)
+            desenhado = 0
+            for start, num_verts, width in self.lotes_renderizacao:
+                if desenhado >= self.draw_limit: break
+                verts_a_desenhar = min(num_verts, self.draw_limit - desenhado)
+                
+                glLineWidth(width)
+                glDrawArrays(GL_LINES, start, verts_a_desenhar)
+                desenhado += verts_a_desenhar
+                
             glBindBuffer(GL_ARRAY_BUFFER, 0)
 
 
 class App:
     def __init__(self, root, models=None):
         self.root = root
-        self.root.title("Visualizador Fractal 3D/2D PRO - L-System Studio")
+        self.root.title("L-System Studio 3D PRO")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
         
         style = ttk.Style()
@@ -190,6 +202,7 @@ class App:
         self.models_list = models if models else []
         self.selected_model = None
         self._is_processing = False
+        self.vertices_raw = None # Buffer em RAM para exportação
 
         try:
             self.motor = MotorLSystem()
@@ -211,6 +224,7 @@ class App:
         menu_bar = tk.Menu(self.root)
         file_menu = tk.Menu(menu_bar, tearoff=0)
         file_menu.add_command(label="Exportar Imagem (PNG)...", command=lambda: self._exportar_imagem())
+        file_menu.add_command(label="Exportar Malha 3D (.OBJ)...", command=self._exportar_obj)
         file_menu.add_separator()
         file_menu.add_command(label="Sair", command=self.root.quit)
         menu_bar.add_cascade(label="Arquivo", menu=file_menu)
@@ -235,7 +249,6 @@ class App:
         ttk.Button(tab_gerar, text="Carregar Modelo", command=self.carregar_modelo_selecionado).pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Separator(tab_gerar, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-
         tk.Label(tab_gerar, text="Ângulo (graus):", bg=Palette.BACKGROUND).pack(anchor="w", padx=5)
         self.slider_ang = ttk.Scale(tab_gerar, from_=0.0, to=180.0, orient=tk.HORIZONTAL)
         self.slider_ang.pack(fill=tk.X, padx=5)
@@ -259,15 +272,12 @@ class App:
         ttk.Button(tab_visual, text="Resetar Câmera Orbital", command=lambda: self.fractal_gl.reset_view()).pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Separator(tab_visual, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-
         tk.Label(tab_visual, text="Personalizar Cores:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5, pady=5)
         ttk.Button(tab_visual, text="Cor Inicial", command=lambda: self._escolher_cor(True)).pack(fill=tk.X, padx=5, pady=2)
         ttk.Button(tab_visual, text="Cor Final", command=lambda: self._escolher_cor(False)).pack(fill=tk.X, padx=5, pady=2)
         
         ttk.Separator(tab_visual, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-        
         tk.Label(tab_visual, text="Renderização Progressiva:", font=("Segoe UI", 9, "bold"), bg=Palette.BACKGROUND).pack(anchor='w', padx=5)
-        tk.Label(tab_visual, text="Velocidade:", bg=Palette.BACKGROUND).pack(anchor='w', padx=5)
         self.slider_anim = ttk.Scale(tab_visual, from_=0.1, to=10.0, orient=tk.HORIZONTAL)
         self.slider_anim.set(1.0)
         self.slider_anim.pack(fill=tk.X, padx=5)
@@ -306,7 +316,9 @@ class App:
         if cor_hex:
             if is_start: Palette.GRADIENT_START = cor_hex
             else: Palette.GRADIENT_END = cor_hex
-            self.fractal_gl.atualizar_cores_vbo()
+            # Força o recálculo via geometria
+            if self.vertices_raw is not None:
+                self.fractal_gl.carregar_geometria(self.vertices_raw)
 
     def _parar_animacao(self):
         self.fractal_gl.is_animating = False
@@ -390,7 +402,41 @@ class App:
             self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
 
     def _finalizar_processamento(self, vertices: np.ndarray):
+        self.vertices_raw = vertices
         self.fractal_gl.carregar_geometria(vertices)
-        self.footer_label.config(text=f" Concluído | {len(vertices)//3:,} vértices espaciais computados.")
+        self.footer_label.config(text=f" Concluído | {len(vertices)//2:,} arestas topológicas processadas.")
         self._is_processing = False
         self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
+
+    def _exportar_imagem(self):
+        if self.fractal_gl.num_vertices == 0: return
+        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
+        if filepath:
+            self.fractal_gl.exportar_para_imagem(filepath)
+            self.footer_label.config(text=f" Imagem exportada: {filepath}")
+
+    def _exportar_obj(self):
+        if self.vertices_raw is None or len(self.vertices_raw) == 0:
+            messagebox.showinfo("Exportar", "Gere um modelo 3D primeiro.")
+            return
+            
+        filepath = filedialog.asksaveasfilename(defaultextension=".obj", filetypes=[("Wavefront OBJ", "*.obj")], title="Exportar Modelo 3D")
+        if not filepath: return
+
+        try:
+            with open(filepath, 'w') as f:
+                f.write("# Gerado nativamente via L-System Studio 3D PRO\n")
+                f.write(f"o {self.selected_model.name.replace(' ', '_')}\n")
+                
+                # Descarrega apenas as coordenadas X, Y, Z originais
+                for i in range(len(self.vertices_raw)):
+                    f.write(f"v {self.vertices_raw[i, 0]} {self.vertices_raw[i, 1]} {self.vertices_raw[i, 2]}\n")
+                    
+                # Conecta os vértices em segmentos de linha de 2 em 2
+                for i in range(1, len(self.vertices_raw), 2):
+                    f.write(f"l {i} {i+1}\n")
+                    
+            self.footer_label.config(text=f" Malha 3D (.OBJ) compilada em: {filepath}")
+            messagebox.showinfo("Sucesso", "Modelo Wavefront .OBJ gerado com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro de I/O", str(e))
