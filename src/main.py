@@ -13,11 +13,11 @@ def loadModels():
     return models
 
 def main():
-    #models = loadModels()
+    models = loadModels()
 
     # interface gráfica
     root = tk.Tk()
-    app = App(root)
+    app = App(root, models)
     root.mainloop()
 
 if __name__ == "__main__":

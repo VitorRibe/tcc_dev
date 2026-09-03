@@ -22,10 +22,13 @@ class FrameFractalGL(OpenGLFrame):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, models=None):
         self.root = root
         self.root.title("Visualizador 3d")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
+
+        self.models_list = models if models else []
+        self.selected_model = None 
 
         #self._load_menu()
         self._load_canvas()
@@ -56,15 +59,30 @@ class App:
 
         # Escolha de modelo
         tk.Label(painel, text="Escolha um modelo:", bg=Palette.BACKGROUND).pack(pady=15, anchor='w')
-        opcoes = ["Python", "JavaScript", "C++", "Java", "Ruby"]
-        combo = ttk.Combobox(painel, values=opcoes, state="readonly")
-        combo.pack(fill=tk.X, padx=10)
 
-        btn_load = tk.Button(painel, text="Carregar Modelo")
+        opcoes = [model.name for model in self.models_list]
+        
+        self.combo = ttk.Combobox(painel, values=opcoes, state="readonly")
+        self.combo.pack(fill=tk.X, padx=10)
+
+        btn_load = tk.Button(painel, text="Carregar Modelo", command=self.carregar_modelo_selecionado)
         btn_load.pack(padx=10, pady=5)
 
+        # Botão de Ação
         btn_reload = tk.Button(painel, text="Atualizar Modelo")
         btn_reload.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+
+    def carregar_modelo_selecionado(self, event=None):
+        nome_escolhido = self.combo.get()
+
+        if not nome_escolhido:
+            print("Nenhum modelo selecionado na lista.")
+            return
+        
+        for model in self.models_list:
+            if model.name == nome_escolhido:
+                self.selected_model = model
+                break
 
     def _load_canvas(self):
         # área de visualização
