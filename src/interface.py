@@ -19,14 +19,18 @@ class FrameFractalGL(OpenGLFrame):
         glDisable(GL_LIGHTING)
         glDisable(GL_DEPTH_TEST)
 
-        # Configurações Premium: Anti-aliasing para suavização perfeita das linhas
+        # Suavização de linhas
         glEnable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
+        # Habilita arrays de vértices e de cores
         glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        
         self.vbo_vertice = glGenBuffers(1)
+        self.vbo_cor = glGenBuffers(1)
         self.num_vertices = 0
 
         self.zoom = 1.0
@@ -68,6 +72,21 @@ class FrameFractalGL(OpenGLFrame):
         self.offset_y = -200.0
         self.tkExpose(None)
 
+    def _gerar_cores_gradiente(self, num_vertices: int) -> np.ndarray:
+        """Gera um array contíguo (N, 3) interpolando as cores inicial e final."""
+        r1, g1, b1 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_START)
+        r2, g2, b2 = Palette.hex_to_rgb_normalized(Palette.GRADIENT_END)
+
+        # Vetor de interpolação t de 0.0 a 1.0
+        t = np.linspace(0, 1, num_vertices, dtype=np.float32).reshape(-1, 1)
+
+        c1 = np.array([r1, g1, b1], dtype=np.float32)
+        c2 = np.array([r2, g2, b2], dtype=np.float32)
+
+        # Cálculo vetorizado: C = C1*(1-t) + C2*t
+        cores_np = c1 * (1 - t) + c2 * t
+        return np.ascontiguousarray(cores_np)
+
     def carregar_geometria(self, vertices_np: np.ndarray):
         if vertices_np.size == 0:
             self.num_vertices = 0
@@ -77,15 +96,21 @@ class FrameFractalGL(OpenGLFrame):
         dados_contiguos = np.ascontiguousarray(vertices_np, dtype=np.float32)
         self.num_vertices = dados_contiguos.shape[0]
 
+        # 1. Atualiza o VBO de Vértices
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-        glBufferData(GL_ARRAY_BUFFER, dados_contiguos.nbytes, dados_contiguos, GL_DYNAMIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, dados_contiguos.nbytes, dados_contiguos, GL_STATIC_DRAW)
+
+        # 2. Gera e atualiza o VBO de Cores (Degradê)
+        cores_np = self._gerar_cores_gradiente(self.num_vertices)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
+        glBufferData(GL_ARRAY_BUFFER, cores_np.nbytes, cores_np, GL_STATIC_DRAW)
+        
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         
         self.reset_view()
         self.tkExpose(None)
 
     def exportar_para_imagem(self, filepath: str):
-        """Lê os pixels diretamente do buffer da GPU e salva em alta qualidade."""
         w = self.winfo_width()
         h = self.winfo_height()
         glReadBuffer(GL_FRONT)
@@ -113,12 +138,16 @@ class FrameFractalGL(OpenGLFrame):
         glTranslatef(self.offset_x, self.offset_y, 0.0)
 
         if self.num_vertices > 0:
-            r_line, g_line, b_line = Palette.hex_to_rgb_normalized(Palette.FRACTAL_LINE)
-            glColor3f(r_line, g_line, b_line)
-            
             glLineWidth(1.5)
+            
+            # Vincula vértices
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
             glVertexPointer(2, GL_FLOAT, 0, None)
+            
+            # Vincula cores
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
+            glColorPointer(3, GL_FLOAT, 0, None)
+            
             glDrawArrays(GL_LINES, 0, self.num_vertices)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
 
@@ -129,7 +158,6 @@ class App:
         self.root.title("Visualizador Fractal 3D/2D PRO")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
         
-        # Aplicação de tema profissional para remover visual datado do Tkinter
         style = ttk.Style()
         if 'clam' in style.theme_names():
             style.theme_use('clam')
@@ -185,7 +213,6 @@ class App:
         if opcoes:
             self.combo.current(0)
 
-        # Botão estilizado com ttk
         ttk.Button(painel, text="Carregar Modelo", command=self.carregar_modelo_selecionado).pack(fill=tk.X, padx=15, pady=5)
 
         tk.Frame(painel, height=1, bg="#d4d4d4").pack(fill=tk.X, padx=15, pady=15)

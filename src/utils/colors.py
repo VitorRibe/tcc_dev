@@ -1,11 +1,17 @@
 """
-    colors.py
     Este arquivo define os códigos das cores usadas no sistema
 """
 class Palette:
     BACKGROUND = "#eaeaea"
-    BACKGROUND_NIGHT = "#2c2a2a"
-    FRACTAL_LINE = "#cce6f2" # Nova cor centralizada para os vértices do L-System
+    BACKGROUND_NIGHT = "#1e1e24" # Um pouco mais escuro para destacar o neon
+    
+    # Cores do degradê (Exemplo: Cyberpunk / Neon Vibe)
+    GRADIENT_START = "#00f2fe" # Ciano brilhante
+    GRADIENT_END = "#4facfe"   # Azul profundo
+    
+    # Alternativa (Fogo/Magma): 
+    # GRADIENT_START = "#f12711"
+    # GRADIENT_END = "#f5af19"
 
     @classmethod
     def hex_to_rgb_normalized(cls, hex_code: str) -> tuple[float, float, float]:
