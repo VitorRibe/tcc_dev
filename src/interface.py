@@ -4,7 +4,7 @@ import numpy as np
 import threading
 from PIL import Image
 from OpenGL.GL import *
-from OpenGL.GLU import gluPerspective
+from OpenGL.GL.shaders import compileProgram, compileShader
 from pyopengltk import OpenGLFrame
 from utils.colors import Palette
 from motor_lsystem import MotorLSystem
@@ -12,6 +12,31 @@ from loader import GrammarModel, save_model
 
 WIDTH = 1200
 LENGTH = 800
+
+# Pipeline Programável: Vertex Shader calcula a projeção matricial na GPU
+VERTEX_SHADER = """
+#version 120
+attribute vec4 position;
+attribute vec3 color;
+varying vec3 v_color;
+uniform mat4 mvp;
+
+void main() {
+    // position.w contém a profundidade estrutural topológica
+    gl_Position = mvp * vec4(position.xyz, 1.0);
+    v_color = color;
+}
+"""
+
+# Pipeline Programável: Fragment Shader aplica a coloração interpolada
+FRAGMENT_SHADER = """
+#version 120
+varying vec3 v_color;
+
+void main() {
+    gl_FragColor = vec4(v_color, 1.0);
+}
+"""
 
 class FrameFractalGL(OpenGLFrame):
     def initgl(self):
@@ -25,8 +50,14 @@ class FrameFractalGL(OpenGLFrame):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glEnableClientState(GL_COLOR_ARRAY)
+        # Compilação e vinculação do programa GLSL
+        self.shader = compileProgram(
+            compileShader(VERTEX_SHADER, GL_VERTEX_SHADER),
+            compileShader(FRAGMENT_SHADER, GL_FRAGMENT_SHADER)
+        )
+        self.pos_loc = glGetAttribLocation(self.shader, "position")
+        self.col_loc = glGetAttribLocation(self.shader, "color")
+        self.mvp_loc = glGetUniformLocation(self.shader, "mvp")
         
         self.vbo_vertice = glGenBuffers(1)
         self.vbo_cor = glGenBuffers(1)
@@ -50,6 +81,38 @@ class FrameFractalGL(OpenGLFrame):
         self.bind("<Button-3>", self._on_click)        
         self.bind("<B3-Motion>", self._on_drag_pan)
         self.bind("<MouseWheel>", self._on_zoom)
+
+    # --- Cálculos Matriciais Otimizados via NumPy ---
+    def _get_perspective(self, fov, aspect, z_near, z_far):
+        f = 1.0 / np.tan(np.radians(fov) / 2.0)
+        mat = np.zeros((4, 4), dtype=np.float32)
+        mat[0, 0] = f / aspect
+        mat[1, 1] = f
+        mat[2, 2] = (z_far + z_near) / (z_near - z_far)
+        mat[2, 3] = -1.0
+        mat[3, 2] = (2.0 * z_far * z_near) / (z_near - z_far)
+        return mat
+
+    def _get_translation(self, x, y, z):
+        mat = np.identity(4, dtype=np.float32)
+        mat[0, 3] = x
+        mat[1, 3] = y
+        mat[2, 3] = z
+        return mat
+
+    def _get_rotation_x(self, angle):
+        c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
+        mat = np.identity(4, dtype=np.float32)
+        mat[1, 1], mat[1, 2] = c, -s
+        mat[2, 1], mat[2, 2] = s, c
+        return mat
+
+    def _get_rotation_y(self, angle):
+        c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
+        mat = np.identity(4, dtype=np.float32)
+        mat[0, 0], mat[0, 2] = c, s
+        mat[2, 0], mat[2, 2] = -s, c
+        return mat
 
     def _on_click(self, event):
         self.last_x = event.x
@@ -90,7 +153,6 @@ class FrameFractalGL(OpenGLFrame):
             self.tkExpose(None)
             return
 
-        # Agrupamento e ordenação geométrica por nível de profundidade W
         segmentos = vertices_np.reshape(-1, 2, 4)
         prof_max = np.max(segmentos[:, 0, 3]) if len(segmentos) > 0 else 1
         prof_max = prof_max if prof_max > 0 else 1
@@ -98,22 +160,20 @@ class FrameFractalGL(OpenGLFrame):
         ordem = np.argsort(segmentos[:, 0, 3])
         segmentos_ordenados = segmentos[ordem]
         vertices_ordenados = segmentos_ordenados.reshape(-1, 4)
+        
         self.num_vertices = vertices_ordenados.shape[0]
         self.draw_limit = self.num_vertices
 
-        # Separação das coordenadas X,Y,Z para a GPU
-        geom_xyz = np.ascontiguousarray(vertices_ordenados[:, 0:3], dtype=np.float32)
-
+        geom_xyzw = np.ascontiguousarray(vertices_ordenados, dtype=np.float32)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-        glBufferData(GL_ARRAY_BUFFER, geom_xyz.nbytes, geom_xyz, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, geom_xyzw.nbytes, geom_xyzw, GL_STATIC_DRAW)
 
-        # Mapeamento do lote de renderização (Desempenho e Espessura Dinâmica)
         self.lotes_renderizacao = []
         start = 0
         unique_depths, counts = np.unique(segmentos_ordenados[:, 0, 3], return_counts=True)
         for depth, count in zip(unique_depths, counts):
             num_verts = count * 2
-            width = max(1.0, 5.0 - (depth * 0.4)) # Base grossa (5.0), pontas finas (1.0)
+            width = max(1.0, 5.0 - (depth * 0.4)) 
             self.lotes_renderizacao.append((start, num_verts, width))
             start += num_verts
 
@@ -126,7 +186,6 @@ class FrameFractalGL(OpenGLFrame):
         c1 = np.array([r1, g1, b1], dtype=np.float32)
         c2 = np.array([r2, g2, b2], dtype=np.float32)
 
-        # Gradiente vinculado topologicamente à árvore (e não à ordem de desenho)
         t = (profundidades / prof_max).reshape(-1, 1)
         cores_np = c1 * (1 - t) + c2 * t
         cores_np = np.ascontiguousarray(cores_np, dtype=np.float32)
@@ -162,21 +221,34 @@ class FrameFractalGL(OpenGLFrame):
 
     def redraw(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(45.0, (self.winfo_width() or 1) / (self.winfo_height() or 1), 1.0, 10000.0)
+        
+        w, h = self.winfo_width() or 1, self.winfo_height() or 1
+        aspect = w / h
+        
+        proj = self._get_perspective(45.0, aspect, 1.0, 10000.0)
+        view = self._get_translation(self.pan_x, self.pan_y, self.zoom)
+        rot_x = self._get_rotation_x(self.rot_x)
+        rot_y = self._get_rotation_y(self.rot_y)
+        
+        # Álgebra Matricial: MVP = Projection * View * Rotation
+        model = np.dot(rot_x, rot_y)
+        mv = np.dot(view, model)
+        mvp = np.dot(proj, mv)
+        
+        # Transposição para ordenação Column-Major nativa do OpenGL
+        mvp_col_major = np.ascontiguousarray(mvp.T, dtype=np.float32)
 
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        glTranslatef(self.pan_x, self.pan_y, self.zoom)
-        glRotatef(self.rot_x, 1.0, 0.0, 0.0)
-        glRotatef(self.rot_y, 0.0, 1.0, 0.0)
+        glUseProgram(self.shader)
+        glUniformMatrix4fv(self.mvp_loc, 1, GL_FALSE, mvp_col_major)
 
         if self.draw_limit > 0:
+            glEnableVertexAttribArray(self.pos_loc)
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertice)
-            glVertexPointer(3, GL_FLOAT, 0, None) 
+            glVertexAttribPointer(self.pos_loc, 4, GL_FLOAT, GL_FALSE, 0, None)
+
+            glEnableVertexAttribArray(self.col_loc)
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo_cor)
-            glColorPointer(3, GL_FLOAT, 0, None)
+            glVertexAttribPointer(self.col_loc, 3, GL_FLOAT, GL_FALSE, 0, None)
             
             desenhado = 0
             for start, num_verts, width in self.lotes_renderizacao:
@@ -187,13 +259,17 @@ class FrameFractalGL(OpenGLFrame):
                 glDrawArrays(GL_LINES, start, verts_a_desenhar)
                 desenhado += verts_a_desenhar
                 
+            glDisableVertexAttribArray(self.pos_loc)
+            glDisableVertexAttribArray(self.col_loc)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
+            
+        glUseProgram(0)
 
 
 class App:
     def __init__(self, root, models=None):
         self.root = root
-        self.root.title("L-System Studio 3D PRO")
+        self.root.title("L-System Studio 3D PRO - GLSL Pipeline")
         self.root.geometry(f"{WIDTH}x{LENGTH}")
         
         style = ttk.Style()
@@ -202,7 +278,7 @@ class App:
         self.models_list = models if models else []
         self.selected_model = None
         self._is_processing = False
-        self.vertices_raw = None # Buffer em RAM para exportação
+        self.vertices_raw = None
 
         try:
             self.motor = MotorLSystem()
@@ -261,7 +337,7 @@ class App:
         self.slider_len = ttk.Scale(tab_gerar, from_=1, to=50, orient=tk.HORIZONTAL)
         self.slider_len.pack(fill=tk.X, padx=5)
 
-        self.btn_gerar = tk.Button(tab_gerar, text="Renderizar Fractal 3D", bg="#005fb8", fg="white", font=("Segoe UI", 10, "bold"), command=self._iniciar_processamento_thread)
+        self.btn_gerar = tk.Button(tab_gerar, text="Renderizar Fractal GLSL", bg="#005fb8", fg="white", font=("Segoe UI", 10, "bold"), command=self._iniciar_processamento_thread)
         self.btn_gerar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=15)
 
         tab_visual = tk.Frame(notebook, bg=Palette.BACKGROUND)
@@ -316,7 +392,6 @@ class App:
         if cor_hex:
             if is_start: Palette.GRADIENT_START = cor_hex
             else: Palette.GRADIENT_END = cor_hex
-            # Força o recálculo via geometria
             if self.vertices_raw is not None:
                 self.fractal_gl.carregar_geometria(self.vertices_raw)
 
@@ -362,7 +437,7 @@ class App:
         self.footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.footer_frame.pack_propagate(False)
 
-        self.footer_label = tk.Label(self.footer_frame, text=" L-System Studio 3D | Pronto.", bg="#e0e0e0", fg="#444", anchor="w", font=("Segoe UI", 8))
+        self.footer_label = tk.Label(self.footer_frame, text=" L-System Studio GLSL | Pronto.", bg="#e0e0e0", fg="#444", anchor="w", font=("Segoe UI", 8))
         self.footer_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     def _load_canvas(self, parent_frame):
@@ -386,7 +461,7 @@ class App:
     def _iniciar_processamento_thread(self):
         if self._is_processing or not self.selected_model: return
         self._is_processing = True
-        self.btn_gerar.config(state=tk.DISABLED, text="Calculando Matrizes 3D...")
+        self.btn_gerar.config(state=tk.DISABLED, text="Calculando Matrizes GLSL...")
         
         n = min(15, int(self.slider_iter.get()))
         threading.Thread(target=self._processar_fractal_worker, args=(n, float(self.slider_ang.get()), float(self.slider_len.get())), daemon=True).start()
@@ -399,14 +474,14 @@ class App:
         except Exception as e:
             self.root.after(0, lambda: self.footer_label.config(text=f" Erro: {e}"))
             self._is_processing = False
-            self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
+            self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal GLSL")
 
     def _finalizar_processamento(self, vertices: np.ndarray):
         self.vertices_raw = vertices
         self.fractal_gl.carregar_geometria(vertices)
-        self.footer_label.config(text=f" Concluído | {len(vertices)//2:,} arestas topológicas processadas.")
+        self.footer_label.config(text=f" Concluído | {len(vertices)//2:,} arestas renderizadas via Shaders.")
         self._is_processing = False
-        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal 3D")
+        self.btn_gerar.config(state=tk.NORMAL, text="Renderizar Fractal GLSL")
 
     def _exportar_imagem(self):
         if self.fractal_gl.num_vertices == 0: return
@@ -428,11 +503,9 @@ class App:
                 f.write("# Gerado nativamente via L-System Studio 3D PRO\n")
                 f.write(f"o {self.selected_model.name.replace(' ', '_')}\n")
                 
-                # Descarrega apenas as coordenadas X, Y, Z originais
                 for i in range(len(self.vertices_raw)):
                     f.write(f"v {self.vertices_raw[i, 0]} {self.vertices_raw[i, 1]} {self.vertices_raw[i, 2]}\n")
                     
-                # Conecta os vértices em segmentos de linha de 2 em 2
                 for i in range(1, len(self.vertices_raw), 2):
                     f.write(f"l {i} {i+1}\n")
                     
