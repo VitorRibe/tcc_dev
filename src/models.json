@@ -3,7 +3,8 @@
     {
       "name": "Algae",
       "axiom": "A",
-      "iterations": 4,
+      "iterations": 6,
+      "angle": 0.0,
       "rules": {
         "A": "AB",
         "B": "A"
@@ -12,7 +13,8 @@
     {
       "name": "Cantor Set",
       "axiom": "A",
-      "iterations": 3,
+      "iterations": 4,
+      "angle": 0.0,
       "rules": {
         "A": "ABA",
         "B": "BBB"
@@ -21,9 +23,68 @@
     {
       "name": "Koch Curve",
       "axiom": "F",
-      "iterations": 2,
+      "iterations": 4,
+      "angle": 90.0,
       "rules": {
         "F": "F+F-F-F+F"
+      }
+    },
+    {
+      "name": "Sierpinski Arrowhead",
+      "axiom": "A",
+      "iterations": 6,
+      "angle": 60.0,
+      "rules": {
+        "A": "B-A-B",
+        "B": "A+B+A"
+      }
+    },
+    {
+      "name": "Dragon Curve",
+      "axiom": "FX",
+      "iterations": 10,
+      "angle": 90.0,
+      "rules": {
+        "X": "X+YF+",
+        "Y": "-FX-Y"
+      }
+    },
+    {
+      "name": "Fractal Plant (Weed)",
+      "axiom": "X",
+      "iterations": 6,
+      "angle": 25.0,
+      "rules": {
+        "X": "F+[[X]-X]-F[-FX]+X",
+        "F": "FF"
+      }
+    },
+    {
+      "name": "Binary Tree",
+      "axiom": "F",
+      "iterations": 6,
+      "angle": 45.0,
+      "rules": {
+        "F": "FF+[+F-F-F]-[-F+F+F]"
+      }
+    },
+    {
+      "name": "Sierpinski Curve",
+      "axiom": "F+XF+F+XF",
+      "iterations": 4,
+      "angle": 90.0,
+      "rules": {
+        "X": "XF-F+F-XF+F+XF-F+F-X"
+      }
+    },
+    {
+      "name": "Hilbert Curve",
+      "axiom": "A",
+      "iterations": 5,
+      "angle": 90.0,
+      "rules": {
+        "A": "-BF+AFA+FB-",
+        "B": "+AF-BFB-FA+"
       }
     }
   ]

@@ -1,23 +1,20 @@
-from loader import load_models
+import sys
 import tkinter as tk
+from loader import load_models
 from interface import App
 
-
-def loadModels():
-    models = load_models()
+def initialize_data(filepath: str):
+    models = load_models(filepath)
     if not models:
-        print("Nenhum modelo foi carregado. Encerrando o programa.")
-        return
-    print("Estruturas carregadas em memória!")
-    print(f"\nTotal de modelos carregados: {len(models)}\n" + "="*40)
+        print("[Fatal] Nenhum modelo carregado de models.json.")
+        sys.exit(1)
+    print(f"[Sistema] {len(models)} modelos carregados com sucesso.")
     return models
 
 def main():
-    models = loadModels()
-
-    # interface gráfica
+    models_list = initialize_data("models.json")
     root = tk.Tk()
-    app = App(root, models)
+    app = App(root, models=models_list)
     root.mainloop()
 
 if __name__ == "__main__":
