@@ -1,3 +1,6 @@
+"""
+    Este arquivo carrega para a memória os modelos de estruturas.
+"""
 import json
 from dataclasses import dataclass
 from typing import Dict, List
@@ -9,7 +12,7 @@ class GrammarModel:
     iterations: int
     rules: Dict[str, str]
 
-def load_models(filepath: str) -> List[GrammarModel]:
+def load_models(filepath: "str") -> List[GrammarModel]:
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
                 data = json.load(file)
@@ -21,10 +24,8 @@ def load_models(filepath: str) -> List[GrammarModel]:
          return []
     except Exception as e:
          print(f"Erro inesperado ao ler o arquivo: {e}")
-         return []    
-
-    print("Estruturas carregadas em memória!")
-
+         return []
+    
     try:
         return [
             GrammarModel(
@@ -38,6 +39,3 @@ def load_models(filepath: str) -> List[GrammarModel]:
     except KeyError as e:
         print(f"Erro: Estrutura do JSON inválida. Campo obrigatório ausente: {e}")
         return []
-
-if __name__ == "__main__":
-    models = load_models("models.json")
