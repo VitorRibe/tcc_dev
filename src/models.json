@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "name": "Algae",
+      "axiom": "A",
+      "iterations": 4,
+      "rules": {
+        "A": "AB",
+        "B": "A"
+      }
+    },
+    {
+      "name": "Cantor Set",
+      "axiom": "A",
+      "iterations": 3,
+      "rules": {
+        "A": "ABA",
+        "B": "BBB"
+      }
+    },
+    {
+      "name": "Koch Curve",
+      "axiom": "F",
+      "iterations": 2,
+      "rules": {
+        "F": "F+F-F-F+F"
+      }
+    }
+  ]
+}
