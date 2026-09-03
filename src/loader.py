@@ -1,5 +1,5 @@
 """
-Carrega para a memória os modelos de estruturas a partir de fontes externas.
+Carrega e salva modelos de estruturas a partir de fontes externas.
 """
 import json
 from dataclasses import dataclass
@@ -14,10 +14,7 @@ class GrammarModel:
     rules: Dict[str, str]
 
 def load_models(filepath: str) -> List[GrammarModel]:
-    """
-    Carrega modelos de gramática de um arquivo JSON.
-    Recebe o filepath como injeção de dependência.
-    """
+    """Lê os modelos do JSON."""
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
             data = json.load(file)
@@ -45,3 +42,22 @@ def load_models(filepath: str) -> List[GrammarModel]:
     except KeyError as e:
         print(f"[Erro] Estrutura do JSON inválida. Campo obrigatório ausente: {e}")
         return []
+
+def save_model(filepath: str, new_model: GrammarModel):
+    """Salva um novo modelo validado no arquivo JSON existente."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except:
+        data = {"models": []}
+    
+    data["models"].append({
+        "name": new_model.name,
+        "axiom": new_model.axiom,
+        "iterations": new_model.iterations,
+        "angle": new_model.angle,
+        "rules": new_model.rules
+    })
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)

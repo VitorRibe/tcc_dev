@@ -86,6 +86,65 @@
         "A": "-BF+AFA+FB-",
         "B": "+AF-BFB-FA+"
       }
+    },
+    {
+      "name": "Gosper Curve",
+      "axiom": "A",
+      "iterations": 5,
+      "angle": 60.0,
+      "rules": {
+        "A": "A-B--B+A++AA+B-",
+        "B": "+A-BB--B-A++A+B"
+      }
+    },
+    {
+      "name": "Arbusto Complexo",
+      "axiom": "Y",
+      "iterations": 6,
+      "angle": 25.7,
+      "rules": {
+        "X": "X[-FFF][+FFF]FX",
+        "Y": "YFX[+Y][-Y]"
+      }
+    },
+    {
+      "name": "Planta Densa",
+      "axiom": "X",
+      "iterations": 7,
+      "angle": 22.5,
+      "rules": {
+        "X": "F-[[X]+X]+F[+FX]-X",
+        "F": "FF"
+      }
+    },
+    {
+      "name": "Coral Marinho",
+      "axiom": "F",
+      "iterations": 5,
+      "angle": 22.5,
+      "rules": {
+        "F": "FF-[-F+F+F]+[+F-F-F]"
+      }
+    },
+    {
+      "name": "Grama Selvagem",
+      "axiom": "F",
+      "iterations": 6,
+      "angle": 22.5,
+      "rules": {
+        "F": "FF-[XY]+[XY]",
+        "X": "+FY",
+        "Y": "-FX"
+      }
+    },
+    {
+      "name": "\u00c1rvore Sim\u00e9trica",
+      "axiom": "F",
+      "iterations": 5,
+      "angle": 25.7,
+      "rules": {
+        "F": "F[+F]F[-F]F"
+      }
     }
   ]
 }
