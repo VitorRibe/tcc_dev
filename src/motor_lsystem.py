@@ -1,3 +1,6 @@
+'''
+    Gerencia a expansão da grámatica, modificando a palavra conforme as configurações escolhidas pelo usuário.
+'''
 import ctypes
 import os
 import platform

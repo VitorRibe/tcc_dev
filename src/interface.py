@@ -1,3 +1,6 @@
+'''
+    Gerencia a interface gráfica e exibição dos fractais
+'''
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
 import numpy as np
