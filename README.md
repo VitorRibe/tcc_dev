@@ -8,6 +8,8 @@ mingw64\bin\gcc.exe -shared -m64 -O3 -o src\motor_lsystem.dll src\motor_lsystem.
 ```
 Instale as dependências do python
 ```
+python -m venv venv
+venv\Scripts\activate.bat
 pip install -r requirements.txt
 ```
 
